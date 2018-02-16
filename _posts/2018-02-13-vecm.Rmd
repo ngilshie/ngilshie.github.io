@@ -1,0 +1,407 @@
+---
+layout: post
+title:  "Cointegration analysis of HSFO and Brent crude oil prices"
+categories: [jekyll, rstats]
+tags: [blogdown, knitr, servr, httpuv, websocket]
+published: False
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NULL, collapse = TRUE, warning = FALSE, message = FALSE, cache = TRUE, include = TRUE)
+```
+
+### Introduction
+
+For a certain project at work, we needed a more informed projection of future high sulphur fuel oil price, instead of assuming a flat average all the way until 2050. This made for a pretty fun econometric exercise that required us to:
+
+1. statistically model the historical relationship between high sulphur fuel oil (HSFO) and Brent crude oil prices, and
+2. use this historical relationship and EIA's projection of Brent crude oil prices to project future HSFO prices.
+
+This post comes in two parts that respectively address (1) and (2) above. All statistical analysis was done in R, Version 3.4.1.
+
+### Part 1: Modelling the historical relationship between HSFO and Brent crude oil prices
+
+Without diving into the complex economic and social factors that govern oil prices, we attempt to investigate the statistical relationship between historical HSFO and Brent crude oil prices using time series econometrics. We obtained data on HSFO and Brent crude oil prices from 1 Nov 2011 to 19 Sep 2017, measured daily,[^1] from Platts.[^2] Figure 1 below shows a plot of the data.
+
+```{r exp_plot, results = "hide", fig.height = 4, fig.width = 10, fig.cap = "Fig.1 Historical HSFO and Brent crude oil prices (1 Nov 2011 - 19 Sep 2017)", fig.align = "center"}
+# read in dataset for HSFO and Brent crude oil prices
+price_data <- read.csv("../data/historical_data.csv", header = TRUE, sep = ";")
+
+# load required libraries for data wrangling and visualisation
+lapply(list("ggplot2", "dplyr", "tidyr", "lubridate"), FUN = library, character.only = TRUE)
+
+# create exploratory plot of price data
+price_data %>% 
+  mutate(date2 = dmy(date)) %>%
+  gather(brent:HSFO, key = type, value = price) %>%
+  ggplot(aes(x = date2, y = price)) +
+  geom_line(aes(linetype = type, color = type), size = 0.5) +
+  ggtitle("Fig.1 Historical HSFO and Brent crude oil prices (1 Nov 2011 - 19 Sep 2017)") +
+  labs(x = "Time", y = "Price (USD per bbl)") +
+  scale_color_discrete(name = "Series", labels = c("Brent", "HSFO")) +
+  scale_linetype_discrete(name = "Series", labels = c("Brent", "HSFO")) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%d %b %y") +
+  scale_y_continuous(breaks = seq(20, 130, 20)) +
+  theme(axis.title = element_text(size = 14), axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 14), legend.text = element_text(size = 12),
+        title = element_text(size = 16))
+```
+
+Visually, both HSFO and Brent prices seem to trend together, implying possible correlation between the two. However, when dealing with time series that show trends, one has to be careful to avoid spurious regressions - "nonsense" regressions that imply correlations where there are none.[^3] The exception is when the two time series are involved in some long-run equilibrium, arising from common factors that are able to explain changes in both series, such that when one variable converges to some value the other would do so as well. In this case, we say that the two series are **cointegrated**. In the context of our analysis, we believe that there exists a long-run equilibrium between HSFO and Brent crude oil prices, because they are both driven by similar factors, such as the general demand for petroleum products and the level of oil production. Logically, if HSFO prices stabilise, then so should Brent crude oil prices, and vice versa. In other words, we suspect that the two time series are cointegrated.[^4]
+
+There are a number of statistical procedures to test for cointegration. Before explaining the tests that we conducted, it is helpful to review the statistical definition of cointegration. Formally, *two time series variables $X_t$ and $Y_t$ are cointegrated if and only if*:
+
+1. *$X_t$ and $Y_t$ each has a unit root, and*
+2. *there exists a linear combination of $X_t$ and $Y_t$ that is stationary.*[^5]
+
+To satisfy the first half of the definition above, we now test both HSFO and Brent crude oil prices separately for the presence of a unit root. Table 1 below shows the results of the Augmented Dickey-Fuller test,[^6] performed on each variable separately. The large p-value for both variables means that in both tests, we cannot reject the null hypothesis that a unit root is present i.e. both $X_t$ and $Y_t$ have a unit root, and part (1) of the definition above is satisfied.
+
+```{r adf1, results = "hide"}
+lapply(list("tseries", "readr", "knitr", "kableExtra"), FUN = library, character.only = TRUE)
+```
+
+```{r adf2}
+# test individual series for unit roots (null: unit root present)
+(adf_results <- lapply(list(price_data$HSFO, price_data$brent), FUN = adf.test)) 
+```
+
+```{r adf3, echo = FALSE}
+adf_df <- data.frame(
+  var = c("HSFO", "Brent"),
+  null = rep("unit root present", 2),
+  lag = c(parse_integer(adf_results[[1]][2]$parameter), parse_integer(adf_results[[2]][2]$parameter)),
+  test = c(parse_number(adf_results[[1]]$statistic), parse_number(adf_results[[2]]$statistic)),
+  p = c(adf_results[[1]]$p.value, adf_results[[2]]$p.value)
+)
+adf_df %>% kable("html", 
+                 col.names = c("Variable", "Null hypothesis*", "Lag order", "Test statistic", "p-value"), 
+                 digits = 3, align = "c", 
+                 caption = "Table 1: Augmented Dickey-Fuller test results for HSFO and Brent crude oil prices") %>%
+  kable_styling() %>%
+  add_footnote(label = "The alternative hypothesis in both tests is that the series is trend-stationary.", 
+               notation = "symbol")
+```
+
+To complete the test for cointegration, we use the Johansen cointegration test.[^7] In brief, this test determines the number of cointegrating relationships (linear combinations that satisfy part (2) of the definition above) within a set of time series variables that each has a unit root. Table 2 below shows the results of the test. With reference to row 1, we are able to reject the null hypothesis of no cointegration at the 1% significance level (test statistic ≫ 1% critical value). Moving on to row 2, we see that we cannot reject the null hypothesis that there is one or zero cointegrating relationships, which, together with row 1, implies that there exists exactly one cointegrating relationship i.e. **HSFO and Brent crude oil prices are cointegrated**, as suspected.
+
+```{r johansen1, results = "hide"}
+library(urca)
+```
+
+```{r johansen2}
+# perform Johansen test for cointegration (null: rank is zero i.e. no cointegrating relationships)
+vecm.jo <- ca.jo(price_data[c('brent','HSFO')], type = "eigen", ecdet = 'const', spec = "transitory", K = 2)
+summary(vecm.jo)
+```
+
+```{r johansen3, echo = FALSE}
+johansen_df <- data.frame(
+  row = c(1, 2), null = c("$r = 0$", "$r \\leq 1$"), test = c(63.52, 2.19),
+  ten = c(13.75, 7.52), five = c(15.67, 9.24), one = c(20.20, 12.97)
+)
+johansen_df %>% kable("html",
+                      col.names = c("Row", "Null hypothesis", "Test statistic", "10%", "5%", "1%"), align = "c",
+                      caption = "Table 2: Johansen cointegration test results for HSFO and Brent crude oil prices") %>%
+  kable_styling() %>%
+  add_header_above(header = c("\\s" = 3, "Critical values" = 3)) %>%
+  add_footnote(label = "$r$ above represents the number of cointegrating relationships. The maximal eigenvalue test statistic was used, along with a constant (but no linear trend).", notation = "symbol")
+```
+
+Having found that HSFO and Brent crude oil prices are cointegrated, we now proceed to estimate the cointegrating relationship between the two. Let $H_t$ and $B_t$ represent the HSFO and Brent crude oil price in time t respectively. Then, we want to estimate the regression equation
+
+$$
+\hspace{12 em} B_t = \alpha + \beta H_t + u_t , \hspace{11.5 em}   (eq. 1)
+$$
+
+where $u_t$ is an error term that follows a zero-mean stationary process. It is a fact from statistical theory that if the two variables are cointegrated, then the ordinary least squares (OLS) estimate for the coefficient $\beta$ is super-consistent i.e. the variance of the estimator $\hat{\beta}$ decreases rapidly as the number of observations gets large. Estimating $eq. 1$ using OLS produces the following results[^8]
+
+```{r coint}
+# estimate the cointegrating vector
+coint.lm <- lm(brent ~ HSFO, data = price_data)
+coint.lm$coefficients
+```
+
+$$
+\hat{\alpha} = `r round(coint.lm$coefficients[1], 3)` \hspace{2 cm} \text{ and } \hspace{2 cm} \hat{\beta} = `r round(coint.lm$coefficients[2], 3)`.
+$$
+
+The above results imply that in the long run, as $u_t$ approaches its mean of zero, the equilibrium relationship between HSFO and Brent crude oil price can be expressed as
+
+$$
+\hspace{11 em} B_t = `r round(coint.lm$coefficients[1], 3)` + `r round(coint.lm$coefficients[2], 3)`H_t. \hspace{11 em} (eq. 2)
+$$
+
+Naturally, the value of $u_t$ provides a measure of how far both variables are from their long-run equilibrium relationship in $eq. 2$. Rearranging $eq. 1$, we get
+
+$$
+\hspace{11 em} u_t = B_t - \hat{\alpha} - \hat{\beta}H_t , \hspace{12.25 em} (eq. 3)
+$$
+
+which we call the **error correction term**, so named because we can use it to "correct" for the error between each variables's current value and its long-run value. By part (2) of the definition of cointegration, $u_t$ is stationary.
+
+The issue with using $eq. 1$ to model the data shown in Figure 1 is that $eq. 1$ is static --- it does not explain how each variable evolves over time and eventually draws close to the long-run equilibrium.[^9] Therefore, the standard approach to modelling cointegrated variables is to use a **vector error correction model** (VECM), which is dynamic in the sense that it is able to explain each variable’s short-run evolution over time and long-run central tendency. Let $\Delta H_t$ and $\Delta B_t$ represent the first-difference (i.e. day-on-day change) of HSFO and Brent prices respectively, that is, $\Delta H_t = H_t - H_{t-1}$ and $\Delta B_t = B_t - B_{t-1}$. For both variables, we consider the VECM 
+
+$\hspace{15 em}$ 2. lagged effects $\hspace{1.8 cm}$ 4. error terms
+
+$$
+\begin{align*}
+\hspace{5 em}
+\Delta H_t &= \gamma_0 + \hspace{0.4 em} \gamma_1\Delta B_t \hspace{0.4 em} + \overbrace{\gamma_2\Delta H_{t-1} + \gamma_3\Delta B_{t-1}} \hspace{0.4 mm}+ \hspace{0.4 em} \gamma_4u_{t-1} \hspace{0.4 em} + \overbrace{\epsilon_t^H} 
+\hspace{5 em}(eq. 4)\\
+\Delta B_t &= \delta_0 + \underbrace{\delta_1\Delta H_t} \hspace{0.2 mm} + \;\delta_2\Delta H_{t-1} \hspace{0.35 mm}+ \delta_3\Delta B_{t-1} \hspace{0.2 mm}+ \underbrace{\delta_4u_{t-1}} + \hspace{0.4 em} \epsilon_t^B.
+\end{align*}
+$$
+
+$\hspace{8 em}$ 1. contemporaneous effects $\hspace{2 cm}$ 3. error correction terms
+
+The VECM can be interpreted intuitively in four parts:
+
+1. contemporaneous terms that capture the effect of one variable on the other within the same time period $t$,
+2. lagged terms that relate yesterday’s value of one variable to today’s value of the other variable,
+3. error correction terms that measure how far each variable is from the long-run cointegrating relationship, and
+4. error terms that incorporate any changes to the variables that cannot be explained by the other parts of the model i.e. exogenous shocks, which we assume follow a white noise process.
+
+Because $H_t$ and $B_t$ each has a unit root i.e. integrated of order 1, their first-differences $\Delta H_t$ and $\Delta B_t$ are stationary. Recall that $u_t$, the cointegrating linear combination of $H_t$ and $B_t$, is also stationary. Hence, the left-hand-side and the right-hand-side of the VECM are both stationary,[^10] and so OLS estimation of the VECM should produce reliable results. In long-run equilibria, there are no changes to either HSFO or Brent price, nor any exogenous shocks, such that all first-differenced terms and error terms in the VECM would equal zero. This reduces $eq. 4$ to $\gamma_0 + \gamma_4u_{t-1} = 0$. In practice, $$\hat{\gamma}_0 = 0$$[^11] and so $u_{t-1}=0$, giving the long-run relationship specified in $eq. 2$.
+
+Although both VECM equations are required to specify the bi-directional relationship between both variables, because we intend to project HSFO price given EIA’s projection of Brent crude oil price, we only need to estimate $eq. 4$, which is responsible for explaining HSFO price. Table 3 shows the OLS regression results for $eq. 4$, reproduced below for convenience. 
+
+$$
+\Delta H_t = \gamma_0 + \gamma_1\Delta B_t + \gamma_2\Delta H_{t-1} + \gamma_3\Delta B_{t-1} + \gamma_4u_{t-1} + \epsilon_t^H 
+$$
+
+```{r vecm1}
+# create data frame to store regressors for eq. 4
+price_data2 <- price_data %>% mutate(
+  brent.d = brent - lag(brent), HSFO.d = HSFO - lag(HSFO),
+  brent.dl1 = lag(brent.d), HSFO.dl1 = lag(HSFO.d),
+  ecm = resid(coint.lm), ecm.l1 = lag(ecm)
+)
+# estimate VECM equation for HSFO price
+(HSFO.vecm <- lm(HSFO.d ~ brent.d + HSFO.dl1 + brent.dl1 + ecm.l1, data = price_data2))
+```
+
+```{r vecm2, echo = FALSE}
+vecm_df <- data.frame(
+  row = 1:5, regressor = c("$\\gamma_0$", "$\\Delta B_t$", "$\\Delta H_{t-1}$",
+                           "$\\Delta B_{t-1}$", "$u_{t-1}$"),
+  estimate = HSFO.vecm$coefficients,
+  se = summary(HSFO.vecm)$coefficients[,2],
+  test = summary(HSFO.vecm)$coefficients[,3],
+  p = summary(HSFO.vecm)$coefficients[,4],
+  significance = c("","***","","","***")
+)
+vecm_df %>% kable("html", row.names = FALSE, align = "c", digits = 3,
+                  col.names = c("Row", "Regressor", "Estimate", "Std. error", "$t$-statistic", "$p$-value", "Significance"),
+                  caption = "Table 3: OLS regression results for the VECM equation for HSFO price") %>%
+  kable_styling() %>%
+  add_footnote(label = "$N = 1485$. Adjusted multiple $R^2 = 0.0465$. $^{***}$ denotes significance at the 1% level.", notation = "symbol")
+```
+
+Most importantly, we see that the estimates for $\Delta B_t$ amd the error correction term $u_{t-1}$ are significantly different from zero at the 1% level. Row 2 shows that $\Delta H_t$ and $\Delta B_t$ are positively correlated; more specifically, that a 1 USD increase in the day-on-day change in Brent price is associated with a 0.07 USD increase in the day-on-day change in HSFO price in the same day.[^12] Although the two lagged terms $\Delta H_{t-1}$ and $\Delta B_{t-1}$ are not statistically significant, their coefficient estimates are positive in the way we expect them to be, and so there is no harm in leaving them in the model. Figure 2 below shows no evidence of serial correlation among the residuals, while Figure 3 shows that the residuals are roughly normally distributed, and so the model represented in Table 3 has been properly estimated.
+
+```{r diagnostics, fig.height = 4, fig.width = 10, fig.cap = "Fig 2: Residual plot for VECM model $\\hspace{8 cm}$ Fig 3: Quantile-quantile plot of residuals"}
+# divide plotting window into two columns
+par(mfrow = c(1, 2))
+# draw residual and quantile-quantile plots
+plot(HSFO.vecm, which = 1)
+title(main = "Fig 2: Residual plot for VECM model")
+plot(HSFO.vecm, which = 2)
+title(main = "Fig 3: Quantile-quantile plot of residuals")
+```
+
+### Part 2: Projecting future HSFO price using EIA's projection of Brent crude oil price
+
+Now that most of the statistical heavy-lifting has been done, all that remains is the relatively simple task of applying the estimated model from Table 3 to the EIA's projection of Brent crude oil price. The projection that we obtained from the EIA website[^13] contained annual figures from 2017 to 2050. Table 4 below shows a subset of this projection.
+
+```{r brent}
+# read in EIA's projection of future Brent prices
+brent_data <- read.csv("../data/brent_projection.csv", header = TRUE, sep = ",")
+
+# print table showing snapshot of data
+library(stringr)
+brent_data %>% slice(c(1:3, 32:34)) %>% mutate(date = str_replace(date, "Dec-", "20"), brent = round(brent, 2)) %>%
+  add_row(date = "$\\vdots$", brent = "$\\vdots$", .before = 4) %>%
+  kable("html", row.names = FALSE, align = "c", col.names = c("Year", "Brent price (US$/bbl)"),
+        caption = "Table 4: EIA's projection of annual Brent crude oil prices (2017-2050)") %>%
+        kable_styling()
+```
+
+Because we estimated the VECM with days as the time unit of analysis, applying the model to the annual figures in Table 4 would cause it to fail because it would not be able to account for the huge jump in prices between years. To circumvent this problem, we created monthly figures from Table 4 by:
+	
+1. assuming that all figures in Table 4 reflect the prices in December of the respective year, and
+2. linearly interpolating values (i.e. drawing straight lines) between the December prices.
+
+```{r interpolate}
+# store Brent price for last 3 days of historical data
+brent <- c(tail(price_data$brent, n = 3))
+# add interpolation between last day of historical data and first day of projected data
+brent <- c(brent[1:2], approx(c(tail(price_data$brent, n = 1), brent_data$brent[1]), n = 4)$y)
+# add interpolation between rest of projeced data
+for (i in 1:(dim(brent_data[1])-1)) {
+  brent <- c(brent, approx(brent_data$brent[i:(i+1)], n = 13)$y[-1])
+}
+```
+
+Doing so reduced the time unit of analysis for the projection to months. We further verified that the month-on-month increases in the interpolated projection were of similar magnitude to the day-on-day changes observed in the historical data. 
+
+```{r project}
+# create empty data frame for the projection
+proj <- data.frame(brent = brent, HSFO = c(tail(price_data$HSFO, n = 3), rep(NA, length(brent)-3)),
+                   brent.d = rep(NA, length(brent)), HSFO.d = rep(NA, length(brent)), 
+                   ecm = rep(NA, length(brent)))
+
+# compute projection for first 3 rows 
+proj$ecm[1:3] <- brent[1:3] - coint.lm$coefficients[2]*proj$HSFO[1:3] - coint.lm$coefficients[1]
+proj$brent.d[2:3] <- c(brent[2]-brent[1], brent[3]-brent[2])
+proj$HSFO.d[2:3] <- c(proj$HSFO[2]-proj$HSFO[1], proj$HSFO[3]-proj$HSFO[2])
+
+# compute rest of projection using fitted VECM parameters
+for (i in 4:(dim(proj)[1])) {
+  proj$brent.d[i] <- brent[i] - brent[i-1]
+  proj$HSFO.d[i] <- HSFO.vecm$coefficients[1] + HSFO.vecm$coefficients[2]*proj$brent.d[i] +
+    HSFO.vecm$coefficients[4]*proj$brent.d[i-1] + HSFO.vecm$coefficients[3]*proj$HSFO.d[i-1] +
+    HSFO.vecm$coefficients[5]*proj$ecm[i-1]
+  proj$HSFO[i] <- proj$HSFO[i-1] + proj$HSFO.d[i]
+  proj$ecm[i] <- brent[i] - coint.lm$coefficients[2]*proj$HSFO[i] - coint.lm$coefficients[1]
+}
+
+# add dates to projected data
+proj$date <- dmy(c(rep(NA, 3), "1-Oct-17", "1-Nov-17", "1-Dec-17",
+               t(sapply(c("1-Jan-", "1-Feb-", "1-Mar-", "1-Apr-", "1-May-", "1-Jun-", 
+                        "1-Jul-", "1-Aug-", "1-Sep-", "1-Oct-", "1-Nov-", "1-Dec-"), 
+                      function(month) paste0(month, 18:50)))))
+```
+
+Figure 4 below shows the projection of future HSFO prices based on EIA's projection of Brent crude oil prices, using the VECM model developed in Part 1.[^14] The projected HSFO prices essentially mimic the smooth increase seen in the projected Brent prices. If Brent prices were to plateau beyond 2050, then, based on the VECM, HSFO prices would plateau shortly after to restore the long-run equilibrium specified by $eq.2$. Finally, it is worth noting that notwithstanding the rigorous statistical procedures followed in Part 1, our projection for HSFO prices shown here is only as reliable as EIA's projection for Brent prices, which we took as given.
+
+```{r proj_plot, results = "hide", fig.height = 4, fig.width = 10, fig.cap = "Fig.4 Projection of HSFO prices based on EIA's projection of Brent prices", fig.align = "center"}
+# filter the first observation in every month of the historical data
+proj_df <- price_data %>% separate(date, into = c("day", "month_year"), 
+                                sep = "(?<=[0-9])-", remove = FALSE) %>%
+  group_by(month_year) %>% slice(1) %>% mutate(date = dmy(date)) %>%
+  arrange(date) %>% ungroup() %>% dplyr::select(date, brent, HSFO) %>%
+  bind_rows(proj[-c(1,2,3), ])
+
+# distinguish between observed and projected values
+proj_df <- proj_df %>% mutate(
+  brent_obs = ifelse(date < "2017-10-1", brent, NA),
+  HSFO_obs = ifelse(date < "2017-10-1", HSFO, NA),
+  brent_proj = ifelse(date < "2017-10-1", NA, brent),
+  HSFO_proj = ifelse(date < "2017-10-1", NA, HSFO)
+  )
+
+# plot historical and projected values
+proj_df %>% dplyr::select(-brent, -HSFO) %>%
+  gather(brent_obs:HSFO_proj, key = Type, value = price) %>%
+  ggplot(aes(x = date, y = price)) +
+    geom_line(aes(linetype = Type, color = Type), size = 0.5) +
+    ggtitle("Fig.4 Projection of HSFO prices based on EIA's projection of Brent prices") +
+    labs(x = "Year", y = "Price (USD per bbl)") +
+    annotate("segment", x = as.Date("2017-10-1"), xend = as.Date("2017-10-1"),
+             y = -Inf, yend = Inf, linetype = "dotted", size = 0.7) +
+    annotate("segment", x = as.Date("2050-12-1"), xend = as.Date("2050-12-1"),
+             y = -Inf, yend = Inf, linetype = "dotted", size = 0.7) +
+    annotate("text", x = as.Date("2034-6-1"), y = 107, label = "EIA's projection", 
+             size = 5, angle = 13) + 
+    annotate("text", x = as.Date("2034-6-1"), y = 25, 
+             label = "projection horizon (Oct 2017 - Dec 2050)", size = 5) +
+    scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+    scale_y_continuous(breaks = seq(20, 130, 20)) +
+    scale_color_manual(values = c("#F8766D", "#F8766D", "#00BFC4", "#00BFC4"),
+                       breaks = c("brent_obs", "HSFO_obs"),
+                       labels = c("Brent", "HSFO")) +
+    scale_linetype_manual(values = c(1,2,1,2),
+                          breaks = c("brent_obs", "HSFO_obs"),
+                          labels = c("Brent", "HSFO")) +
+    theme(axis.title = element_text(size = 14), axis.text = element_text(size = 12),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.title = element_text(size = 14), legend.text = element_text(size = 12),
+          title = element_text(size = 16))
+```
+
+### Appendix: Inspecting model fit and back-testing results
+
+In this appendix, we briefly assess the VECM's fit to the historical data, and its ability to predict the historical data. To do this, we perform back-testing by splitting the historical data roughly 50-50 into a training and test set. We then fit the same VECM ($eq.4$) to the training set and use this estimated model to predict HSFO prices for the test set. Figure 5 below shows the fitted and predicted HSFO prices. We see that 
+
+1. the fitted values mimic the observed HSFO prices almost perfectly, and
+2. the predicted values are able to capture the general movement of the observed HSFO prices.
+
+Although the predicted values are not as spot-on as the fitted values (such a feat would be impossible anyway), we emphasise that because the projection was eventually done at the monthly level, the fact that our model is able to capture general price movements at the daily level gave us enough confidence that it would fare well enough for our purpose.[^15] 
+
+```{r backtesting, results = "hide", fig.height = 4.5, fig.width = 10, fig.cap = "Fig.5 Model fit and back-testing result on historical data (1 Nov 2011 - 19 Sep 2017)", fig.align = "center"}
+# fit VECM to first 750 observations
+HSFO.vecm2 <- lm(HSFO.d ~ brent.d + HSFO.dl1 + brent.dl1 + ecm.l1, data = price_data2[1:750,])
+
+# create empty data frame for projection
+back_proj <- data.frame(brent = price_data$brent[748:1487], HSFO = price_data$HSFO[748:1487],
+                        brent.d = rep(NA, 740), HSFO.d = rep(NA, 740), ecm = rep(NA, 740))
+
+# compute projection for first 3 rows 
+back_proj$ecm[1:3] <- back_proj$brent[1:3] - coint.lm$coefficients[2]*back_proj$HSFO[1:3] -    
+                               coint.lm$coefficients[1]
+back_proj$brent.d[2:3] <- c(back_proj$brent[2]-back_proj$brent[1], back_proj$brent[3]-back_proj$brent[2])
+back_proj$HSFO.d[2:3] <- c(back_proj$HSFO[2]-back_proj$HSFO[1], back_proj$HSFO[3]-back_proj$HSFO[2])
+
+# compute rest of projection using fitted VECM parameters
+for (i in 4:(dim(back_proj)[1])) {
+  back_proj$brent.d[i] <- back_proj$brent[i] - back_proj$brent[i-1]
+  back_proj$HSFO.d[i] <- HSFO.vecm2$coefficients[1] + HSFO.vecm2$coefficients[2]*back_proj$brent.d[i] +
+    HSFO.vecm2$coefficients[4]*back_proj$brent.d[i-1] + 
+    HSFO.vecm2$coefficients[3]*back_proj$HSFO.d[i-1] +
+    HSFO.vecm2$coefficients[5]*back_proj$ecm[i-1]
+  back_proj$HSFO[i] <- back_proj$HSFO[i-1] + back_proj$HSFO.d[i]
+  back_proj$ecm[i] <- back_proj$brent[i] - coint.lm$coefficients[2]*back_proj$HSFO[i] - coint.lm$coefficients[1]
+}
+
+# add fitted data to data frame
+price_data3 <- price_data
+price_data3$fitted_diff <- c(NA, NA, fitted(HSFO.vecm2), rep(NA, 1487-750))
+price_data3 <- price_data3 %>% mutate(fitted = HSFO + fitted_diff)
+
+# add back-testing projection to data frame
+price_data3$pred <- c(rep(NA, 750), back_proj$HSFO[-c(1,2,3)])
+
+# plot fitted and predicted data
+price_data3 %>% mutate(date2 = dmy(date)) %>% dplyr::select(date2, brent, HSFO, fitted, pred) %>%
+  gather(brent:pred, key = Type, value = price) %>%
+  mutate(Type = factor(Type, levels = c("brent", "HSFO", "fitted", "pred"))) %>%
+  ggplot(aes(x = date2, y = price)) +
+    geom_line(aes(group = Type, color = Type, linetype = Type), size = 0.5) +
+    ggtitle("Fig.5 Model fit and back-testing result on historical data\n(1 Nov 2011 - 19 Sep 2017)") +
+    labs(x = "Time", y = "Price (USD per bbl)") +
+    annotate("segment", x = as.Date("2011-11-1"), xend = as.Date("2011-11-1"),
+             y = -Inf, yend = Inf, linetype = "dotted", size = 0.7) +
+    annotate("segment", x = as.Date("2014-10-20"), xend = as.Date("2014-10-20"),
+             y = -Inf, yend = Inf, linetype = "dotted", size = 0.7) +
+    annotate("segment", x = as.Date("2017-9-19"), xend = as.Date("2017-9-19"),
+             y = -Inf, yend = Inf, linetype = "dotted", size = 0.7) +
+    annotate("text", x = as.Date("2013-3-1"), y = 40, label = "training set", size = 5) + 
+    annotate("text", x = as.Date("2016-7-1"), y = 110, label = "test set", size = 5) + 
+    scale_x_date(date_breaks = "6 months", date_labels = "%d %b %y") +
+    scale_y_continuous(breaks = seq(20, 130, 20)) +
+    scale_color_manual(values = c("#F8766D", "#00BFC4", "#7CAE00", "#C77CFF"),
+                       labels = c("Brent", "actual HSFO", "fitted HSFO", "predicted HSFO")) +
+    scale_linetype_manual(values = c("solid", "solid", "dashed", "dashed"),
+                          labels = c("Brent", "actual HSFO", "fitted HSFO", "predicted HSFO")) +
+    theme(axis.title = element_text(size = 14), axis.text = element_text(size = 12),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.title = element_text(size = 14), legend.text = element_text(size = 12),
+          title = element_text(size = 16))
+```
+
+[^1]: The daily measurements skip weekends, but because the projection of HSFO prices will eventually be done at the monthly level, this missing data is not a cause for concern.
+[^2]: Data on ticker numbers: PCAAS00 for Dated Brent, PUADV00 for HSFO 180 CST 3.5%S FOB Spore Cargo.
+[^3]: For example, milk consumption and crime rates, two obviously uncorrelated variables, could both increase over time, causing a regression of one variable on the other to suggest positive correlation where there should be none.
+[^4]: Many macroeconomic indicators in general are cointegrated. For example, a well-studied long-run equilibrium exists between GDP and consumption, determined by the average propensity to consume.
+[^5]: Alternatively, two time series variables $X_t$ and $Y_t$ are cointegrated if both $X_t$ and $Y_t$ are integrated of order 1, and a linear combination of $X_t$ and $Y_t$ is integrated of order zero.
+[^6]: Details of the augmented Dickey-Fuller test are beyond the scope of this post.
+[^7]: Details of the Johansen cointegration test are beyond the scope of this post.
+[^8]: We do not report the other typical regression output such as standard errors, p-values and adjusted $R^2$ because, although the OLS estimator $\hat{\beta}$ is super-consistent, its distribution is not asymptotically normal (due to potentially correlated error terms), and so the usual inferential procedures do not apply here.
+[^9]: A more serious problem would be the complete unreliability of any tests for significance due to the serially-correlated residuals.
+[^10]: Linear combinations of stationary time series variables are also stationary.
+[^11]: We add the constant term to achieve a more "stable" regression i.e. lower standard errors for the coefficient estimates. However, in practice, the constant term is usually statistically insignificant and/or close to zero in magnitude.
+[^12]: VECMs are generally not known for coefficient estimates that are easy to interpret. The strength of a VECM, after all, lies in its ability to capture long-run dynamics.
+[^13]: U.S. Energy Information Administration, https://www.eia.gov, last accessed on 21 Sep 2017.
+[^14]: We avoid calling this a _forecast_ of HSFO prices, because _forecast_ implies the estimation of prediction intervals, which we are unable to do here.
+[^15]: Note that the back-testing results will improve as more data gets used in the training set, and that the projection in Part 2 was done after fitting the model to _all_ of the historical data.

@@ -1,0 +1,23 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1518757170073.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1092471501",
+    "id" : "ECF20832",
+    "lastKnownWriteTime" : 1518766413,
+    "last_content_update" : 1518766414823,
+    "path" : "~/Documents/blog/_posts/2018-02-13-vecm.Rmd",
+    "project_path" : "_posts/2018-02-13-vecm.Rmd",
+    "properties" : {
+        "cursorPosition" : "200,193",
+        "last_setup_crc32" : "",
+        "scrollLine" : "229"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1518757460097.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1844698866",
+    "id" : "C80D16E6",
+    "lastKnownWriteTime" : 1518757467,
+    "last_content_update" : 1518757467945,
+    "path" : "~/Documents/blog/R/build_one.R",
+    "project_path" : "R/build_one.R",
+    "properties" : {
+        "cursorPosition" : "21,58",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

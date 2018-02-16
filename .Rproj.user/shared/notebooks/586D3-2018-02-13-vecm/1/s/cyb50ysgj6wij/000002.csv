@@ -1,0 +1,5 @@
+"0","# draw residual and quantile-quantile plots
+plot(HSFO.vecm, which = 1)
+"
+"2","Error in plot(HSFO.vecm, which = 1) : object 'HSFO.vecm' not found
+"
