@@ -4,8 +4,11 @@
 .highlight {
   background: #fff;
   @extend %vertical-rhythm;
-  max-height: 200px;
-  overflow-y: auto;
+  
+/*
+ * max-height: 200px;
+ * overflow-y: auto;
+ */
 
   .highlighter-rouge & {
     background: #eef;
