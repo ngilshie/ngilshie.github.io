@@ -29,4 +29,7 @@ gem "tzinfo-data", platforms: [:mingw, :mswin, :x64_mingw, :jruby]
 gem "wdm", "~> 0.1.0" if Gem.win_platform?
 
 # Use Jekyll SEO Tag
-gem 'jekyll-seo-tag'
+gem "jekyll-seo-tag"
+
+# Use sitemap plugin
+gem "jekyll-sitemap"
