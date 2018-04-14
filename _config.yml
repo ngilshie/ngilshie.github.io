@@ -26,7 +26,7 @@ github_username:  ngilshie
 markdown: kramdown
 theme: minima
 plugins:
-#  - jekyll-feed
+  - jekyll-feed
   - jekyll-seo-tag
   - jekyll-sitemap
 
